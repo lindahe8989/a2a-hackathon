@@ -9,6 +9,14 @@ from google.adk.runners import Runner # executes agent operations
 from google.adk.sessions import InMemorySessionService # manages agent sessions 
 from google.genai import types # google ai types for content handling 
 from google.adk.agents.agent_card import AgentCard # for agent card creation 
+from common.server import A2AServer 
+from common.types import (
+    SendTaskRequest, 
+    TaskSendParams, 
+    Message,
+    TextPart, 
+    AgentCard
+)
 
 # Cache for mission IDs
 # Global set to track active mission IDs (note: this is temporary, resets on restart)
@@ -115,27 +123,67 @@ def search_and_delegate(task_description: str, current_mission: dict) -> dict[st
     """
     try:
         # Use existing find_matching_agent function to search agent cards
-        matching_agent = find_matching_agent(task_description)
+        matching_agent = AgentCard = await find_matching_agent(task_description)
         
         if matching_agent:
-            # Use A2A protocol to delegate
-            return {
-                "status": "delegated",
-                "delegated_to": matching_agent.name,
-                "agent_url": matching_agent.url,
-                "original_mission": current_mission,
-                "delegation_message": f"Task delegated to {matching_agent.name} for specialized handling"
-            }
+            try: 
+                # Create task request following A2A protocol 
+                task_params = TaskSendParams(
+                    id=str(uuid4()),  # Generated ID for the task
+                    sessionId=str(uuid4().hex),  # Session ID
+                    message=Message(
+                        role="user",  # Must be "user" or "agent"
+                        parts=[
+                            TextPart(
+                                type="text",  # This is fixed
+                                text=task_description,  # Your actual message
+                                metadata=None  # Optional
+                            )
+                        ],
+                        metadata=None  # Optional
+                    ),
+                    acceptedOutputModes=matching_agent.defaultOutputModes,
+                    metadata=current_mission  # Optional: can include context
+                )
+
+                request = SendTaskRequest(params=task_params)
+
+                # Create server connection to the matched agent 
+                delegate_server = A2AServer(
+                    agent_card=matching_agent,
+                    host=matching_agent.url.split("://")[1].split(":")[0], 
+                    port=int(matching_agent.url.split(":")[-1].strip("/"))
+                )
+
+                # Send task and await response 
+                response = await delegate_server.send_task(request) 
+
+                return {
+                    "status": "delegated", 
+                    "delegated_to": matching_agent.name, 
+                    "agent_url": matching_agent.url, 
+                    "original_mission": current_mission, 
+                    "delegation_message": f"Task delegated to {matching_agent.name} for specialized handling",
+                    "delegation_response": response.result
+                }
+            except Exception as e:
+                return {
+                    "status": "delegation_failed",
+                    "message": f"Failed to delegate to {matching_agent.name}: {str(e)}",
+                    "agent_url": matching_agent.url
+                }
         else:
             return {
                 "status": "no_match",
                 "message": "No agents found with required capabilities"
             }
+            
     except Exception as e:
         return {
             "status": "error",
-            "message": f"Error in delegation: {str(e)}"
+            "message": f"Error in agent discovery: {str(e)}"
         }
+             
 
 class DroneAgent:
     """Agent that handles drone missions."""
