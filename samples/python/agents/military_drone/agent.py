@@ -8,15 +8,23 @@ from google.adk.memory.in_memory_memory_service import InMemoryMemoryService # M
 from google.adk.runners import Runner # executes agent operations 
 from google.adk.sessions import InMemorySessionService # manages agent sessions 
 from google.genai import types # google ai types for content handling 
-from google.adk.agents.agent_card import AgentCard # for agent card creation 
+# from google.adk.agents.agent_card import AgentCard  # Use this instead of common.types AgentCard
 from common.server import A2AServer 
 from common.types import (
     SendTaskRequest, 
     TaskSendParams, 
     Message,
     TextPart, 
+    AgentSkill,  # Add this import
     AgentCard
 )
+from a2a.find_matching_agent import find_matching_agent 
+from uuid import uuid4
+import logging 
+
+# Set up logging at the top of the file
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Cache for mission IDs
 # Global set to track active mission IDs (note: this is temporary, resets on restart)
@@ -110,80 +118,74 @@ def execute_mission(mission_id: str) -> dict[str, Any]:
         return {"mission_id": mission_id, "status": "Error: Invalid mission_id."}
     return {"mission_id": mission_id, "status": "in_progress"}
 
-def search_and_delegate(task_description: str, current_mission: dict) -> dict[str, Any]:
+async def search_and_delegate(task_description: str, current_mission: dict) -> dict[str, Any]:
     """
-    Search for agents that can better handle specific tasks and delegate using A2A protocol.
+    Search for specialized agents and delegate the mission if a match is found.
     
     Args:
-        task_description: Description of the specific task needed
+        task_description: Description of the specialized capabilities needed
         current_mission: Current mission details
         
     Returns:
-        dict with delegation status and results
+        dict: Delegation results including status and any error messages
     """
     try:
-        # Use existing find_matching_agent function to search agent cards
-        matching_agent = AgentCard = await find_matching_agent(task_description)
+        # Log before search
+        logger.debug(f"Searching for agent with task: {task_description}")
         
+        matching_agent = find_matching_agent(task_description)
+        
+        # Log the found agent
+        logger.debug(f"Found matching agent: {matching_agent}")
+        logger.debug(f"Type of matching_agent: {type(matching_agent)}")
+
         if matching_agent:
-            try: 
-                # Create task request following A2A protocol 
-                task_params = TaskSendParams(
-                    id=str(uuid4()),  # Generated ID for the task
-                    sessionId=str(uuid4().hex),  # Session ID
-                    message=Message(
-                        role="user",  # Must be "user" or "agent"
-                        parts=[
-                            TextPart(
-                                type="text",  # This is fixed
-                                text=task_description,  # Your actual message
-                                metadata=None  # Optional
-                            )
-                        ],
-                        metadata=None  # Optional
-                    ),
-                    acceptedOutputModes=matching_agent.defaultOutputModes,
-                    metadata=current_mission  # Optional: can include context
+            try:
+
+                # Log before creating AgentCard
+                logger.debug("Attempting to create AgentCard with data:")
+                logger.debug(f"Name: {matching_agent.get('name', 'NOT FOUND')}")
+                logger.debug(f"Skills: {matching_agent.get('skills', 'NOT FOUND')}")
+
+                agent_card = AgentCard(
+                    name=matching_agent["name"],
+                    description=matching_agent["description"],
+                    version=matching_agent["version"],
+                    skills=matching_agent["skills"],
+                    url=matching_agent["url"],
+                    capabilities=matching_agent["capabilities"],
+                    defaultInputModes=matching_agent["defaultInputModes"],
+                    defaultOutputModes=matching_agent["defaultOutputModes"]
                 )
-
-                request = SendTaskRequest(params=task_params)
-
-                # Create server connection to the matched agent 
-                delegate_server = A2AServer(
-                    agent_card=matching_agent,
-                    host=matching_agent.url.split("://")[1].split(":")[0], 
-                    port=int(matching_agent.url.split(":")[-1].strip("/"))
-                )
-
-                # Send task and await response 
-                response = await delegate_server.send_task(request) 
-
+                return await delegate_to_agent(agent_card, current_mission)
+            except KeyError as ke:
+                print("unable to find matching agent")
                 return {
-                    "status": "delegated", 
-                    "delegated_to": matching_agent.name, 
-                    "agent_url": matching_agent.url, 
-                    "original_mission": current_mission, 
-                    "delegation_message": f"Task delegated to {matching_agent.name} for specialized handling",
-                    "delegation_response": response.result
+                    "status": "delegation_failed",
+                    "message": f"Missing required field in agent data: {str(ke)}",
+                    "skill_details": matching_agent.get("skills", [{}])[0]
                 }
             except Exception as e:
                 return {
                     "status": "delegation_failed",
-                    "message": f"Failed to delegate to {matching_agent.name}: {str(e)}",
-                    "agent_url": matching_agent.url
+                    "message": f"Failed to delegate to {matching_agent.get('name', 'unknown agent')}: {str(e)}",
+                    "skill_details": matching_agent.get("skills", [{}])[0]
                 }
         else:
             return {
-                "status": "no_match",
-                "message": "No agents found with required capabilities"
+                "status": "delegation_failed",
+                "message": "No matching specialized agents found for this task",
+                "skill_details": {}
             }
-            
     except Exception as e:
         return {
-            "status": "error",
-            "message": f"Error in agent discovery: {str(e)}"
+            "status": "delegation_failed",
+            "message": f"Error during agent search: {str(e)}",
+            "skill_details": {}
         }
-             
+
+def delegate_to_agent(agent_card: AgentCard, current_mission: dict) -> dict[str, Any]:
+    return 1 
 
 class DroneAgent:
     """Agent that handles drone missions."""
@@ -314,7 +316,7 @@ class DroneAgent:
             Configured LlmAgent instance ready to handle drone missions. 
         """
         return LlmAgent(
-            model="claude-3-sonnet",
+            model="gemini-2.0-flash-001",
             name="drone_agent",
             description="This agent handles military drone operations and can find specialized agents for specific tasks",
             instruction="""
@@ -354,27 +356,6 @@ class DroneAgent:
                 create_mission,
                 execute_mission,
                 return_form,
-                search_and_delegate  # Added new tool
+                search_and_delegate
             ],
-            card=AgentCard(
-                name="Military Drone Agent",
-                description="This agent handles military drone operations including mission planning and execution.",
-                url="http://localhost:10002/",
-                version="1.0.0",
-                capabilities={
-                    "streaming": True,
-                    "pushNotifications": False,
-                    "stateTransitionHistory": False
-                },
-                defaultInputModes=["text", "text/plain"],
-                defaultOutputModes=["text", "text/plain"],
-                skills=[
-                    {
-                        "id": "process_drone_mission",
-                        "name": "Drone Mission Control",
-                        "description": "Handles military drone operations including mission planning, execution, and monitoring.",
-                        "tags": ["military", "drone", "surveillance", "reconnaissance"]
-                    }
-                ]
-            )
         )

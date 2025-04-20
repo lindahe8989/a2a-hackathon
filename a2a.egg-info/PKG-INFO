@@ -1,0 +1,20 @@
+Metadata-Version: 2.4
+Name: a2a
+Version: 0.1.0
+Summary: Agent-to-Agent matching and communication library
+Author: Your Name
+Author-email: your.email@example.com
+Requires-Python: >=3.8
+License-File: LICENSE
+Requires-Dist: requests
+Requires-Dist: fastapi
+Requires-Dist: uvicorn
+Requires-Dist: sentence-transformers
+Requires-Dist: faiss-cpu
+Requires-Dist: psycopg
+Dynamic: author
+Dynamic: author-email
+Dynamic: license-file
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

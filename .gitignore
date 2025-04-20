@@ -1,3 +1,14 @@
 .DS_Store
 __pycache__
-.env
+.env# Exclude large files over 100MB
+a2a-hackathon/lib/python3.12/site-packages/torch/lib/libtorch_cpu.dylib
+*.dylib
+*.so
+*.dll
+*.pyd
+a2a-hackathon/lib/
+venv/
+env/
+*.pyc
+__pycache__/
+

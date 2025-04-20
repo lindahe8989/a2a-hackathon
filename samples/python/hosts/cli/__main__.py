@@ -7,7 +7,7 @@ from uuid import uuid4
 import urllib
 
 @click.command()
-@click.option("--agent", default="http://localhost:10000")
+@click.option("--agent", default="http://localhost:10002")
 @click.option("--session", default=0)
 @click.option("--history", default=False)
 @click.option("--use_push_notifications", default=False)
